@@ -53,19 +53,50 @@ def delete_record(filename, column_name, value_to_delete):
                 record_pos = data_offset + mid * record_size
                 file.seek(record_pos)
                 deleted_flag = file.read(1)
-                if deleted_flag == b'\x01':
-                    # Пропускаем удаленные записи
-                    if mid < right:
-                        mid += 1
-                    else:
-                        break
-                    continue
                 file.seek(record_pos + col_offset)
                 value_bytes = file.read(col_size)
                 value = unpack_value(value_bytes, type_code, col_size)
+
+                if deleted_flag == b'\x01':
+                    # Пропускаем удаленные записи, но корректируем left и right
+                    # Поскольку мы не можем определить отношение value к value_to_delete, проверяем соседние элементы
+                    # Проверяем слева и справа от mid
+                    # Попытаемся найти ближайшую не удаленную запись
+                    left_neighbor = mid - 1
+                    right_neighbor = mid + 1
+                    found = False
+                    while left_neighbor >= left or right_neighbor <= right:
+                        if left_neighbor >= left:
+                            record_pos = data_offset + left_neighbor * record_size
+                            file.seek(record_pos)
+                            deleted_flag = file.read(1)
+                            file.seek(record_pos + col_offset)
+                            value_bytes = file.read(col_size)
+                            value = unpack_value(value_bytes, type_code, col_size)
+                            if deleted_flag != b'\x01':
+                                mid = left_neighbor
+                                found = True
+                                break
+                            left_neighbor -= 1
+                        if right_neighbor <= right:
+                            record_pos = data_offset + right_neighbor * record_size
+                            file.seek(record_pos)
+                            deleted_flag = file.read(1)
+                            file.seek(record_pos + col_offset)
+                            value_bytes = file.read(col_size)
+                            value = unpack_value(value_bytes, type_code, col_size)
+                            if deleted_flag != b'\x01':
+                                mid = right_neighbor
+                                found = True
+                                break
+                            right_neighbor += 1
+                    if not found:
+                        # Если не нашли ни слева, ни справа, прекращаем поиск
+                        break
+                    # После обновления mid, продолжаем обычную проверку ниже
                 if value == value_to_delete:
                     # Помечаем запись как удаленную
-                    file.seek(record_pos)
+                    file.seek(data_offset + mid * record_size)
                     file.write(b'\x01')
                     num_deleted += 1
                     break  # Удаляем только одну запись
@@ -73,6 +104,7 @@ def delete_record(filename, column_name, value_to_delete):
                     left = mid + 1
                 else:
                     right = mid - 1
+
         else:
             # Линейный поиск и удаление всех соответствующих записей
             for i in range(num_records_intheheader):

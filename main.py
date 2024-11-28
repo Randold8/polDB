@@ -1,4 +1,6 @@
 # main.py
+import tkinter as tk
+from poldb_gui import PoldbGUI
 import os
 from create_poldb import create_poldb
 from add_record import add_record
@@ -121,3 +123,7 @@ if __name__ == "__main__":
     # Выполняем поисковые запросы
     perform_searches(db_filename)
 
+
+root = tk.Tk()
+app = PoldbGUI(root)
+root.mainloop()
