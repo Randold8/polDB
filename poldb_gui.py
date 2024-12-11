@@ -1,14 +1,19 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog, messagebox
-import struct
 import os
+import csv
+import struct
+import shutil
+
+
 
 from poldb_structure import pack_value, unpack_value, get_type_code
 from add_record import add_record
 from search_records import search_records
 from delete_record import delete_record
 from create_poldb import create_poldb
+from import_csv_to_poldb import import_csv_to_poldb
 
 
 class PoldbGUI:
@@ -23,43 +28,71 @@ class PoldbGUI:
         self.create_widgets()
 
     def create_widgets(self):
-        # Create menu
+        # Создание меню
         menubar = tk.Menu(self.master)
         self.master.config(menu=menubar)
 
-        # Add 'File' menu
+        # Меню "Создать"
+        self.create_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Создать", menu=self.create_menu)
+        self.create_menu.add_command(label="Создать базу данных", command=self.open_create_database_window)
+        self.create_menu.add_command(label="Создать из CSV", command=self.create_database_from_csv)
+
+        # Меню "Файл"
         self.file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Файл", menu=self.file_menu)
-        self.file_menu.add_command(label="Создать базу данных", command=self.open_create_database_window)
         self.file_menu.add_command(label="Открыть", command=self.open_database)
-        self.file_menu.add_command(label="Добавить запись", command=self.open_add_record_window, state="disabled")
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Экспортировать в CSV", command=self.export_to_csv, state="disabled")
+        self.file_menu.add_command(label="Создать резервную копию", command=self.create_backup, state="disabled")
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Выход", command=self.master.quit)
 
-        # Добавляем меню 'Редактировать' и подменю для удаления
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Редактировать", menu=edit_menu)
-        edit_menu.add_command(label="Удалить выбранные записи", command=self.delete_selected_records)
-        edit_menu.add_command(label="Удалить записи по значению", command=self.open_delete_by_value_window)
+        # Меню "Редактировать"
+        self.edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Редактировать", menu=self.edit_menu)
+        self.edit_menu.add_command(label="Добавить запись", command=self.open_add_record_window, state="disabled")
+        self.edit_menu.add_command(label="Удалить выбранные записи", command=self.delete_selected_records)
+        self.edit_menu.add_command(label="Удалить записи по значению", command=self.open_delete_by_value_window)
 
-        search_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Поиск", menu=search_menu)
-        search_menu.add_command(label="Поиск по значению", command=self.open_search_window)
+        # Меню "Поиск"
+        self.search_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Поиск", menu=self.search_menu)
+        self.search_menu.add_command(label="Поиск по значению", command=self.open_search_window)
 
-        # Create Treeview widget for displaying data
-        self.tree = ttk.Treeview(self.master)
+        # Создаем Frame для размещения Treeview и скроллбаров
+        tree_frame = tk.Frame(self.master)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Создаем вертикальный скроллбар
+        vsb = tk.Scrollbar(tree_frame, orient="vertical")
+        vsb.grid(row=0, column=1, sticky='ns')
+
+        # Создаем горизонтальный скроллбар
+        hsb = tk.Scrollbar(tree_frame, orient="horizontal")
+        hsb.grid(row=1, column=0, sticky='ew')
+
+        # Создаем Treeview
+        self.tree = ttk.Treeview(tree_frame, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         self.tree.bind('<Double-1>', self.on_double_click)
-        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky='nsew')
 
-        # Создаем стиль для Treeview и устанавливаем тему 'clam'
+        # Привязываем скроллбары к Treeview
+        vsb.config(command=self.tree.yview)
+        hsb.config(command=self.tree.xview)
+
+        # Указываем, что область размещения растягивается при изменении размера окна
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        # Настройка стилей Treeview (остается без изменений)
         self.style = ttk.Style()
-        self.style.theme_use('clam')  # Установите тему на 'clam', 'alt' или 'default'
+        self.style.theme_use('clam')
 
         # Настройка стиля для тега 'found' (выделение найденных записей)
         self.tree.tag_configure('found', background='yellow')
-        self.style.configure("KeyColumn.Treeview.Cell", background="#d9ead3")  # Light green background
+        self.style.configure("KeyColumn.Treeview.Cell", background="#d9ead3")
         self.style.configure("KeyColumn.Treeview.Heading", font=('TkDefaultFont', 10, 'bold'))
-        # Создаем стиль для ключевых столбцов
         self.style.configure("Treeview.KeyColumn", background="#d9ead3")
 
     def open_create_database_window(self):
@@ -183,7 +216,9 @@ class PoldbGUI:
                 # Открываем созданную базу данных
                 self.filename = filename
                 self.load_data()
-                self.file_menu.entryconfig("Добавить запись", state="normal")
+                # Активируем пункты меню
+                self.edit_menu.entryconfig("Добавить запись", state="normal")
+                self.file_menu.entryconfig("Создать резервную копию", state="normal")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось создать базу данных:\n{e}")
 
@@ -201,8 +236,10 @@ class PoldbGUI:
                 # Устанавливаем временный файл для загрузки
                 self.filename = filename
                 self.load_data()
-                # Enable 'Add Record' menu item
-                self.file_menu.entryconfig("Добавить запись", state="normal")
+                # Активируем пункты меню
+                self.edit_menu.entryconfig("Добавить запись", state="normal")
+                self.file_menu.entryconfig("Экспортировать в CSV", state="normal")
+                self.file_menu.entryconfig("Создать резервную копию", state="normal")
             except Exception as e:
                 # Если произошла ошибка, показываем сообщение и возвращаем старое значение
                 messagebox.showerror("Ошибка", f"Не удалось загрузить базу данных:\n{e}")
@@ -581,28 +618,41 @@ class PoldbGUI:
                 messagebox.showerror("Ошибка", "Введено неверное значение для выбранного столбца.")
                 return
 
+            # Используем функцию search_records для поиска записей
+            try:
+                found_records = search_records(self.filename, column_name, search_value)
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Ошибка при поиске записей:\n{e}")
+                return
+
             # Очистка предыдущего выделения
             for item_id in self.tree.get_children():
                 self.tree.item(item_id, tags=())  # Удаляем все теги
 
             # Поиск и выделение найденных записей
             found_count = 0
-            for item_id in self.tree.get_children():
-                value = self.tree.set(item_id, column_name)
-                try:
-                    if type_code == 1:
-                        value = int(value)
-                    elif type_code == 2:
-                        value = float(value)
-                    elif type_code == 3:
-                        value = str(value)
-                except ValueError:
-                    continue  # Пропускаем, если значение нельзя привести к нужному типу
+            first_found_item_id = None  # Для хранения item_id первого найденного элемента
+            for record in found_records:
+                # Находим item_id записи в Treeview
+                for item_id in self.tree.get_children():
+                    match = True
+                    for col_name in self.tree["columns"]:
+                        tree_value = self.tree.set(item_id, col_name)
+                        record_value = record[col_name]
+                        # Приводим значения к строке для сравнения
+                        if str(tree_value) != str(record_value):
+                            match = False
+                            break
+                    if match:
+                        self.tree.item(item_id, tags=('found',))
+                        found_count += 1
+                        if first_found_item_id is None:
+                            first_found_item_id = item_id  # Сохраняем item_id первого найденного элемента
+                        break
 
-                if value == search_value:
-                    # Устанавливаем тег 'found' для выделения
-                    self.tree.item(item_id, tags=('found',))
-                    found_count += 1
+            # Если найдены записи, автоматически прокручиваем к первой найденной записи
+            if first_found_item_id:
+                self.tree.see(first_found_item_id)
 
             # Отображаем сообщение с количеством найденных записей
             if found_count > 0:
@@ -610,10 +660,208 @@ class PoldbGUI:
             else:
                 messagebox.showinfo("Результаты поиска", "Записи не найдены.")
 
+            # Закрываем окно поиска после завершения поиска
             search_window.destroy()
 
+        # Создаем кнопку "Найти" вне функции perform_search()
         search_button = tk.Button(search_window, text="Найти", command=perform_search)
         search_button.grid(row=2, column=0, columnspan=2, pady=10)
+
+    def export_to_csv(self):
+        # Запрашиваем у пользователя путь для сохранения файла CSV
+        csv_filename = filedialog.asksaveasfilename(title="Сохранить CSV файл",
+                                                    defaultextension=".csv",
+                                                    filetypes=[("CSV файлы", "*.csv"), ("Все файлы", "*.*")])
+        if not csv_filename:
+            return  # Пользователь отменил диалог сохранения
+
+        try:
+            with open(self.filename, 'rb') as poldb_file:
+                # Чтение заголовка
+                header = poldb_file.read(18)
+                magic, version, num_columns, num_records, record_size, data_offset = struct.unpack('>4sHHIHI',
+                                                                                                   header)
+
+                # Проверка магического числа
+                if magic != b'PLDB':
+                    messagebox.showerror("Ошибка", "Неверный файл базы данных Poldb.")
+                    return
+
+                # Чтение метаданных столбцов
+                columns = []
+                for _ in range(num_columns):
+                    col_data = poldb_file.read(36)
+                    col_name_bytes, type_code, col_size, is_key = struct.unpack('>32sBHB', col_data)
+                    col_name = col_name_bytes.decode('utf-8').rstrip('\0')
+                    columns.append((col_name, type_code, col_size))
+
+                # Подготовка CSV-файла
+                with open(csv_filename, 'w', newline='', encoding='utf-8') as csv_file:
+                    writer = csv.writer(csv_file)
+
+                    # Запись заголовков столбцов
+                    header_row = [col[0] for col in columns]
+                    writer.writerow(header_row)
+
+                    # Чтение и запись записей
+                    for i in range(num_records):
+                        record_pos = data_offset + i * record_size
+                        poldb_file.seek(record_pos)
+                        deleted_flag = poldb_file.read(1)
+                        if deleted_flag == b'\x01':
+                            continue  # Пропускаем удаленные записи
+
+                        record_bytes = poldb_file.read(record_size - 1)
+                        record = []
+                        offset = 0
+                        for col_name, type_code, col_size in columns:
+                            value_bytes = record_bytes[offset:offset + col_size]
+                            value = unpack_value(value_bytes, type_code, col_size)
+                            record.append(value)
+                            offset += col_size
+
+                        writer.writerow(record)
+
+            messagebox.showinfo("Экспорт завершён", f"Файл успешно экспортирован в '{csv_filename}'.")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Произошла ошибка при экспорте:\n{e}")
+
+    def sort_by_column(self, col, reverse):
+        # Получаем данные из Treeview
+        data = [(self.tree.set(child, col), child) for child in self.tree.get_children('')]
+
+        # Определяем тип данных столбца
+        type_code = next((item[1] for item in self.columns if item[0] == col), 3)  # По умолчанию str
+
+        # Определяем функцию для преобразования значений в соответствующий тип
+        def convert(value):
+            if type_code == 1:  # int
+                try:
+                    return int(value)
+                except ValueError:
+                    return 0
+            elif type_code == 2:  # float
+                try:
+                    return float(value)
+                except ValueError:
+                    return 0.0
+            else:
+                return str(value)
+
+        # Применяем функцию преобразования к данным
+        data = [(convert(value), child) for (value, child) in data]
+
+        # Сортируем данные
+        data.sort(reverse=reverse)
+
+        # Перемещаем элементы в новом порядке
+        for index, (val, child) in enumerate(data):
+            self.tree.move(child, '', index)
+
+        # Меняем направление сортировки для следующего клика
+        self.tree.heading(col, command=lambda: self.sort_by_column(col, not reverse))
+
+    def create_backup(self):
+        if not self.filename:
+            messagebox.showwarning("Предупреждение", "Нет открытой базы данных для создания резервной копии.")
+            return
+
+        # Предлагаем выбрать место и имя для резервной копии
+        backup_filename = filedialog.asksaveasfilename(title="Сохранить резервную копию как",
+                                                       initialfile=os.path.basename(self.filename) + ".backup",
+                                                       defaultextension=".poldb",
+                                                       filetypes=[("Poldb файлы", "*.poldb"), ("Все файлы", "*.*")])
+        if not backup_filename:
+            return  # Пользователь отменил диалог сохранения
+
+        try:
+            shutil.copy2(self.filename, backup_filename)
+            messagebox.showinfo("Успех", f"Резервная копия успешно создана по пути:\n{backup_filename}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось создать резервную копию:\n{e}")
+
+    def create_database_from_csv(self):
+        # Открываем диалог для выбора CSV-файла
+        csv_filename = filedialog.askopenfilename(title="Выберите CSV-файл",
+                                                  filetypes=[("CSV файлы", "*.csv"), ("Все файлы", "*.*")])
+        if not csv_filename:
+            return  # Пользователь отменил диалог
+
+        # Открываем диалог для сохранения Poldb-файла
+        poldb_filename = filedialog.asksaveasfilename(title="Сохранить как Poldb-файл",
+                                                      defaultextension=".poldb",
+                                                      filetypes=[("Poldb файлы", "*.poldb"), ("Все файлы", "*.*")])
+        if not poldb_filename:
+            return  # Пользователь отменил диалог
+
+        # Открываем окно для указания параметров импорта
+        import_window = tk.Toplevel(self.master)
+        import_window.title("Параметры импорта CSV")
+
+        # Читаем заголовки CSV-файла
+        try:
+            with open(csv_filename, 'r', newline='', encoding='utf-8') as csv_file:
+                reader = csv.reader(csv_file)
+                headers = next(reader)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать CSV-файл:\n{e}")
+            return
+
+        # Отображаем список столбцов для ввода типов данных и указания ключевых столбцов
+        entries = {}
+        for idx, col_name in enumerate(headers):
+            tk.Label(import_window, text=col_name).grid(row=idx, column=0, padx=5, pady=5)
+
+            type_var = tk.StringVar(value='str')
+            tk.OptionMenu(import_window, type_var, 'int', 'float', 'str').grid(row=idx, column=1, padx=5, pady=5)
+
+            size_entry = tk.Entry(import_window)
+            size_entry.insert(0, '50')  # Значение по умолчанию
+            size_entry.grid(row=idx, column=2, padx=5, pady=5)
+
+            key_var = tk.IntVar()
+            tk.Checkbutton(import_window, variable=key_var).grid(row=idx, column=3, padx=5, pady=5)
+
+            entries[col_name] = (type_var, size_entry, key_var)
+
+        tk.Label(import_window, text="Тип данных").grid(row=0, column=1)
+        tk.Label(import_window, text="Размер (байт)").grid(row=0, column=2)
+        tk.Label(import_window, text="Ключевой").grid(row=0, column=3)
+
+        def start_import():
+            column_types = {}
+            column_sizes = {}
+            key_columns = []
+            try:
+                for col_name, (type_var, size_entry, key_var) in entries.items():
+                    col_type = type_var.get()
+                    size = int(size_entry.get())
+                    if size <= 0:
+                        raise ValueError(f"Размер столбца '{col_name}' должен быть больше 0.")
+                    column_types[col_name] = col_type
+                    column_sizes[col_name] = size
+                    if key_var.get():
+                        key_columns.append(col_name)
+
+                if not key_columns:
+                    raise ValueError("Необходимо указать хотя бы один ключевой столбец.")
+
+                # Вызываем функцию импорта
+                import_csv_to_poldb(csv_filename, poldb_filename, key_columns, column_types, column_sizes)
+
+                messagebox.showinfo("Успех", f"База данных успешно создана по пути '{poldb_filename}'.")
+                import_window.destroy()
+                # Открываем созданную базу данных
+                self.filename = poldb_filename
+                self.load_data()
+                self.edit_menu.entryconfig("Добавить запись", state="normal")
+                self.file_menu.entryconfig("Экспортировать в CSV", state="normal")
+
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Ошибка при импорте CSV:\n{e}")
+
+        import_button = tk.Button(import_window, text="Импортировать", command=start_import)
+        import_button.grid(row=len(headers), column=0, columnspan=4, pady=10)
 
 
 

@@ -30,7 +30,7 @@ def setup_database(filename):
             "first_name": "John",
             "last_name": "Doe",
             "department": "IT",
-            "position": "Software Engineer",
+            "position": "So ftware Engineer",
             "salary": 75000.00,
             "years_of_service": 5
         },

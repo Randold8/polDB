@@ -71,3 +71,4 @@ def read_record(record_bytes, columns):
         offset += col_size
     return record
 
+
